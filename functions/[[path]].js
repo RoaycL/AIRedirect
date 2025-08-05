@@ -2,7 +2,7 @@
 
 /**
  * 主处理函数，作为智能路由器
- * @param {object} context - Cloudflare Pages 的上下文对象，包含 request, env, waitUntil 等
+ * @param {object} context - Cloudflare Pages 的上下文对象
  */
 export async function onRequest(context) {
     const { request } = context;
@@ -14,8 +14,9 @@ export async function onRequest(context) {
         case '/v1/models':
             return handleModelsRequest(request, context);
 
+        case '/':
         case '/v1/chat/completions':
-        case '/api/openai': // 兼容旧路径
+        case '/api/openai':
             return handleChatCompletionsRequest(request);
 
         default:
@@ -24,38 +25,26 @@ export async function onRequest(context) {
 }
 
 /**
- * 处理模型列表请求 (/v1/models)
- * 新增了动态获取和缓存逻辑
- * @param {Request} request - 从客户端传来的原始请求
- * @param {object} context - Cloudflare Pages 上下文
+ * 处理模型列表请求 (/v1/models)，包含动态获取和缓存
+ * @param {Request} request
+ * @param {object} context
  */
 async function handleModelsRequest(request, context) {
-    const cache = caches.default; // 获取 Cloudflare 的默认缓存 API
-    let response = await cache.match(request); // 尝试从缓存中匹配请求
+    const cache = caches.default;
+    let response = await cache.match(request);
+    if (response) { return response; }
 
-    if (response) {
-        console.log("Cache HIT for /v1/models");
-        return response; // 如果命中缓存，直接返回缓存的响应
-    }
-
-    console.log("Cache MISS for /v1/models. Fetching from origin...");
-
-    // --- 如果未命中缓存，则执行实时获取 ---
-
-    // 1. 从客户端请求中提取 Authorization 头，用于向 GitHub API 进行身份验证
     const authHeader = request.headers.get('Authorization');
     if (!authHeader) {
         return new Response(JSON.stringify({ error: 'Authorization header is missing' }), { status: 401 });
     }
 
-    // 2. 准备请求 GitHub 官方模型目录所需的头
     const githubCatalogHeaders = new Headers({
         'Authorization': authHeader,
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
     });
 
-    // 3. 请求真正的 GitHub 模型目录 API
     const catalogResponse = await fetch('https://models.github.ai/catalog/models', {
         headers: githubCatalogHeaders,
     });
@@ -65,8 +54,6 @@ async function handleModelsRequest(request, context) {
     }
 
     const githubModels = await catalogResponse.json();
-
-    // 4. 实时将 GitHub 格式的列表转换为 OpenAI 格式
     const openAIFormattedModels = githubModels.map(model => ({
         id: model.id,
         object: 'model',
@@ -74,12 +61,7 @@ async function handleModelsRequest(request, context) {
         owned_by: model.publisher || 'unknown',
     }));
 
-    const responseData = {
-        object: 'list',
-        data: openAIFormattedModels,
-    };
-
-    // 5. 创建新的响应，并设置缓存策略（缓存1小时）
+    const responseData = { object: 'list', data: openAIFormattedModels };
     response = new Response(JSON.stringify(responseData), {
         status: 200,
         headers: {
@@ -88,16 +70,13 @@ async function handleModelsRequest(request, context) {
         },
     });
 
-    // 6. 将新响应异步存入缓存，不会阻塞对用户的返回
     context.waitUntil(cache.put(request, response.clone()));
-
     return response;
 }
 
 /**
- * 处理聊天请求 (POST /v1/chat/completions)
- * 这部分逻辑保持不变
- * @param {Request} request - 从客户端传来的原始请求
+ * 处理聊天请求
+ * @param {Request} request
  */
 async function handleChatCompletionsRequest(request) {
     if (request.method !== 'POST') {
