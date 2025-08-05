@@ -2,6 +2,7 @@
 
 /**
  * 主处理函数，作为智能路由器
+ * 最终版本：根据 utools 客服的反馈，增加了对 /v1 路径的健康检查响应
  * @param {object} context - Cloudflare Pages 的上下文对象
  */
 export async function onRequest(context) {
@@ -11,14 +12,27 @@ export async function onRequest(context) {
 
     // 根据访问路径，决定执行哪个操作
     switch (path) {
+        // 新增：处理对 /v1 根路径的健康检查
+        case '/v1':
+            if (request.method === 'GET' || request.method === 'HEAD') {
+                return new Response(JSON.stringify({ status: "ok", message: "v1 endpoint is active and ready." }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            break; // 如果不是 GET/HEAD，则继续到 default
+
+        // 处理模型列表请求
         case '/v1/models':
             return handleModelsRequest(request, context);
 
+        // 处理聊天请求
         case '/':
         case '/v1/chat/completions':
         case '/api/openai':
             return handleChatCompletionsRequest(request);
 
+        // 其他所有未知路径，都返回 404
         default:
             return new Response('Not Found', { status: 404 });
     }
@@ -66,7 +80,7 @@ async function handleModelsRequest(request, context) {
         status: 200,
         headers: {
             'Content-Type': 'application/json',
-            'Cache-Control': 'public, max-age=3600', // 缓存1小时
+            'Cache-Control': 'public, max-age=3600',
         },
     });
 
